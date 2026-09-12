@@ -1,0 +1,165 @@
+---
+title: "TMP/SMX Resistance in E. coli Urinary Isolates: Association with Age and Clinical Setting"
+subtitle: "ARMD Dataset Analysis"
+author: "Sammer Fatima"
+date: today
+format: 
+  html:
+    toc: true
+    toc-depth: 2
+    code-fold: true
+---
+
+## Setup
+
+```{r}
+#| label: setup
+#| message: false
+
+library(tidyverse)
+library(car) # VIF ke liye
+library(gtsummary)
+```
+
+## Background
+
+Trimethoprim/sulfamethoxazole (TMP/SMX) remains a first-line empiric agent for uncomplicated urinary tract infections, but rising resistance among uropathogens threatens its clinical utility. *Escherichia coli*, the most common cause of community- and hospital-acquired UTIs, shows variable resistance patterns that may be influenced by both patient-level factors (such as age) and setting-level factors (such as inpatient versus outpatient care).
+
+This analysis examines whether patient age group and clinical setting (inpatient vs. outpatient) are independently associated with antibiotic resistance among *Escherichia coli* urinary isolates, using the Antibiotic Resistance Microbiology Dataset, a de-identified EHR-derived resource (ARMD; Nateghi Haredasht et al., 2025).
+
+## Data Loading and Preparation
+
+```{r}
+#| label: load-data
+
+cohort <- read_csv("microbiology_cultures_cohort.csv", show_col_types = FALSE)
+demographics <- read_csv("microbiology_cultures_demographics.csv", show_col_types = FALSE)
+```
+
+We restrict the cohort to *E. coli* urine culture isolates tested against Trimethoprim/Sulfamethoxazole (TMP/SMX), join demographic information, and apply exclusion criteria (missing age, missing clinical setting, or inconclusive/null susceptibility results).
+
+```{r}
+#| label: build-final-dataset
+
+final_data <- cohort %>%
+  filter(
+    culture_description == "URINE",
+    organism == "ESCHERICHIA COLI",
+    antibiotic == "Trimethoprim/Sulfamethoxazole",
+    susceptibility %in% c("Susceptible", "Resistant", "Intermediate")
+  ) %>%
+  left_join(demographics %>% select(order_proc_id_coded, age, gender), 
+            by = "order_proc_id_coded") %>%
+  filter(!is.na(age), ordering_mode != "Null") %>%
+  mutate(
+    resistant_outcome = if_else(susceptibility %in% c("Resistant", "Intermediate"), 1, 0)
+  )
+
+nrow(final_data)
+```
+
+## Table 1: Cohort Characteristics
+
+```{r}
+#| label: table1-combined
+
+final_data <- final_data %>%
+  mutate(outcome_label = if_else(resistant_outcome == 1, "Non-susceptible", "Susceptible"))
+
+final_data %>%
+  select(age, ordering_mode, outcome_label) %>%
+  tbl_summary(
+    by = outcome_label,
+    label = list(age ~ "Age Group", ordering_mode ~ "Clinical Setting")
+  ) %>%
+  add_overall() %>%
+  add_p()
+```
+
+## Table 2: Multivariable Logistic Regression Results
+
+```{r}
+#| label: table2-regression
+
+model2 <- glm(resistant_outcome ~ age + ordering_mode, data = final_data, family = "binomial")
+
+tbl_regression(model2, exponentiate = TRUE, label = list(age ~ "Age Group", ordering_mode ~ "Clinical Setting"))
+
+vif(model2)
+```
+
+## Table 3: Age-Stratified Analysis by Clinical Setting
+
+Given a statistically significant age × clinical setting interaction (likelihood ratio test, p \< 0.001), we present age-specific odds ratios stratified by clinical setting.
+
+```{r}
+#| label: interaction-test
+
+model3 <- glm(resistant_outcome ~ age * ordering_mode, data = final_data, family = "binomial")
+anova(model2, model3, test = "Chisq")
+```
+
+```{r}
+#| label: table3-stratified
+
+model_ip <- glm(resistant_outcome ~ age, 
+                 data = filter(final_data, ordering_mode == "Inpatient"), 
+                 family = "binomial")
+model_op <- glm(resistant_outcome ~ age, 
+                 data = filter(final_data, ordering_mode == "Outpatient"), 
+                 family = "binomial")
+
+tbl_ip <- tbl_regression(model_ip, exponentiate = TRUE, label = list(age ~ "Age Group")) %>%
+  modify_header(estimate ~ "**Inpatient OR**")
+
+tbl_op <- tbl_regression(model_op, exponentiate = TRUE, label = list(age ~ "Age Group")) %>%
+  modify_header(estimate ~ "**Outpatient OR**")
+
+tbl_merge(list(tbl_ip, tbl_op), tab_spanner = c("**Inpatient**", "**Outpatient**"))
+```
+
+## Figures
+
+```{r}
+#| label: fig-age
+#| fig-cap: "TMP/SMX non-susceptibility rate (%) by age group among *E. coli* urinary isolates (N = 56,379)"
+
+final_data %>%
+  group_by(age) %>%
+  summarise(resistance_rate = mean(resistant_outcome) * 100) %>%
+  ggplot(aes(x = age, y = resistance_rate)) +
+  geom_col(fill = "steelblue") +
+  geom_text(aes(label = round(resistance_rate, 1)), vjust = -0.5) +
+  labs(x = "Age Group", y = "Non-susceptibility Rate (%)") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+```{r}
+#| label: fig-interaction
+#| fig-cap: "TMP/SMX non-susceptibility rate (%) by age group, stratified by clinical setting, among *E. coli* urinary isolates (N = 56,379)"
+
+final_data %>%
+  group_by(age, ordering_mode) %>%
+  summarise(resistance_rate = mean(resistant_outcome) * 100, .groups = "drop") %>%
+  ggplot(aes(x = age, y = resistance_rate, color = ordering_mode, group = ordering_mode)) +
+  geom_line(linewidth = 1) +
+  geom_point(size = 2) +
+  labs(x = "Age Group", y = "Non-susceptibility Rate (%)", color = "Setting") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+------------------------------------------------------------------------
+
+## Results
+
+The final analytic cohort included 56,379 TMP/SMX susceptibility tests among E. coli urinary isolates, of which 15,878 (28.2%) were non-susceptible (resistant or intermediate) and 40,501 (71.8%) were susceptible. Age group distribution was fairly even across the nine strata, with the largest proportion of tests occurring in the 65–74 year group (17%). The cohort was nearly evenly split by clinical setting (51% inpatient, 49% outpatient). Both age group and clinical setting were significantly associated with non-susceptibility in bivariate analysis (both χ² p \< 0.001; Table 1).
+
+In the adjusted multivariable logistic regression model (Table 2), age group was independently associated with TMP/SMX resistance relative to the 18–24 year reference group, with odds increasing through mid-adulthood and peaking at 55–64 years (OR = 1.23, 95% CI 1.13–1.33, p \< 0.001), before declining toward the null in the oldest age groups (85–89 years: OR = 0.98; above 90: OR = 0.98). Outpatient setting was associated with lower odds of resistance compared to inpatient setting (OR = 0.89, 95% CI 0.86–0.92, p \< 0.001).
+
+A likelihood ratio test comparing the main-effects model to a model including an age × clinical setting interaction term was significant (Deviance = 38.65, df = 8, p \< 0.001), indicating that the effect of age on resistance differs by setting. Age-stratified analysis (Table 3) confirmed this: among inpatients, resistance odds rose sharply and significantly with age, peaking at 55–64 years (OR = 1.35, 95% CI 1.21–1.52, p \< 0.001) and remaining elevated through 75–84 years (OR = 1.16, p = 0.010). Among outpatients, no age group reached statistical significance at the conventional α = 0.05 threshold, with all confidence intervals for the 95% CIs crossing 1 (e.g., 55–64 years: OR = 1.11, 95% CI 0.99–1.24, p = 0.086). This pattern indicates that the age-related increase in TMP/SMX resistance is driven primarily by the inpatient subgroup, and is largely attenuated or absent among outpatients.
+
+## Conclusion
+
+TMP/SMX resistance in E. coli urinary isolates was significantly associated with both age and clinical setting, but the two didn't act independently — the age-related rise in resistance was really an inpatient effect, peaking around 55–64 years, while outpatient resistance stayed flat across age groups. This means setting should be factored in alongside age when thinking about empiric TMP/SMX use, rather than treating age as a uniform risk factor. As with any EHR-derived dataset, these findings show association, not causation, and would benefit from validation using data on prior antibiotic exposure and length of stay.
