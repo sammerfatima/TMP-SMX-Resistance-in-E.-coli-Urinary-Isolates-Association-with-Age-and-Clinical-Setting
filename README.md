@@ -31,7 +31,7 @@ Among E. coli urinary isolates, are patient age group and clinical setting indep
 
 ## Files 
 - `TMPSMX_ARMD_analysis.qmd` — full reproducible analysis (R code + interpretation)
-- `TMPSMX_ARMD_analysis.html` — rendered report ([view live report](link here)
+- `TMPSMX_ARMD_analysis.html` — rendered report ([view live report](https://sammerfatima.github.io/TMP-SMX-Resistance-in-E.-coli-Urinary-Isolates-Association-with-Age-and-Clinical-Setting/TMPSMX_ARMD_analysis.html)
 
 ## Key Findings
 
